@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -125,6 +126,80 @@ func TestDefaultFilename(t *testing.T) {
 	isNil(err, t)
 	equals(len(b), n, t)
 	existsWithContent(filename, b, t)
+}
+
+func TestExceedsMidnight(t *testing.T) {
+	locationEuropeAthens, _ := time.LoadLocation("Europe/Athens")
+	fakeCurrentTime = time.Date(2022, 8, 23, 23, 59, 0, 0, locationEuropeAthens)
+
+	currentTime = fakeTime
+	bCount := 0
+	dir := makeTempDir("RollingInterval", t)
+	defer os.RemoveAll(dir)
+	filename := logFile(dir)
+	l := &Logger{
+		Filename:         filename,
+		MaxSize:          100,
+		RotateOnMidnight: true,
+	}
+	defer l.Close()
+	b := []byte("boo!")
+	allBytes := append(b, b...)
+	for i := 0; i < 2; i++ {
+		n, err := l.Write(b)
+		isNil(err, t)
+		bCount += n
+	}
+	equals(len(allBytes), bCount, t)
+	existsWithContent(filename, allBytes, t)
+	fileCount(dir, 1, t)
+
+	fakeCurrentTime = time.Date(2022, 8, 24, 0, 0, 1, 0, locationEuropeAthens)
+	currentTime = fakeTime
+
+	n, err := l.Write(b)
+	isNil(err, t)
+	equals(len(b), n, t)
+	existsWithContent(l.filename(), b, t)
+	fileCount(dir, 2, t)
+}
+
+func TestDoesNotExceedMidnight(t *testing.T) {
+	locationEuropeAthens, _ := time.LoadLocation("Europe/Athens")
+	fakeCurrentTime = time.Date(2022, 8, 23, 23, 57, 0, 0, locationEuropeAthens)
+
+	currentTime = fakeTime
+	bCount := 0
+	dir := makeTempDir("RollingInterval", t)
+	defer os.RemoveAll(dir)
+	filename := logFile(dir)
+	l := &Logger{
+		Filename:         filename,
+		MaxSize:          100,
+		RotateOnMidnight: false,
+	}
+	defer l.Close()
+	b := []byte("boo!")
+	allBytes := append(b, b...)
+	for i := 0; i < 2; i++ {
+		n, err := l.Write(b)
+		isNil(err, t)
+		bCount += n
+	}
+	equals(len(allBytes), bCount, t)
+	existsWithContent(filename, allBytes, t)
+	fileCount(dir, 1, t)
+
+	fakeCurrentTime = time.Date(2022, 8, 23, 23, 59, 0, 0, locationEuropeAthens)
+	currentTime = fakeTime
+
+	n, err := l.Write(b)
+	bCount += n
+	allBytes = append(allBytes, b...)
+	isNil(err, t)
+	equals(len(allBytes), bCount, t)
+	existsWithContent(filename, allBytes, t)
+	fileCount(dir, 1, t)
 }
 
 func TestAutoRotate(t *testing.T) {
@@ -813,4 +888,39 @@ func notExist(path string, t testing.TB) {
 func exists(path string, t testing.TB) {
 	_, err := os.Stat(path)
 	assertUp(err == nil, t, 1, "expected file to exist, but got error from os.Stat: %v", err)
+}
+
+func TestStartOfDay(t *testing.T) {
+	type args struct {
+		t time.Time
+	}
+
+	locationEuropeAthens, _ := time.LoadLocation("Europe/Athens")
+	tests := []struct {
+		name string
+		args args
+		want time.Time
+	}{
+		{
+			name: "Start of day for 2022-08-23T22:01:00Z should be 2022-08-23T00:00:00Z",
+			args: args{
+				t: time.Date(2022, 8, 23, 22, 01, 0, 0, time.UTC),
+			},
+			want: time.Date(2022, 8, 23, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name: "Start of day for 2022-07-21T08:05:00+03:00 should be 2022-07-21T00:00:00+03:00",
+			args: args{
+				t: time.Date(2022, 7, 21, 8, 05, 0, 0, locationEuropeAthens),
+			},
+			want: time.Date(2022, 7, 21, 0, 0, 0, 0, locationEuropeAthens),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := StartOfDay(tt.args.t); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("StartOfDay() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }

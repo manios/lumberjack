@@ -93,6 +93,10 @@ type Logger struct {
 	// based on age.
 	MaxAge int `json:"maxage" yaml:"maxage"`
 
+	// RotateOnMidnight indicates whether the log file should be rotated daily
+	// whenever a log line that is going to be written exceeds 00:00 hours.
+	RotateOnMidnight bool `json:"rotateOnMidnight" yaml:"rotateOnMidnight"`
+
 	// MaxBackups is the maximum number of old log files to retain.  The default
 	// is to retain all old log files (though MaxAge may still cause them to get
 	// deleted.)
@@ -105,11 +109,11 @@ type Logger struct {
 
 	// Compress determines if the rotated log files should be compressed
 	// using gzip. The default is not to perform compression.
-	Compress bool `json:"compress" yaml:"compress"`
-
-	size int64
-	file *os.File
-	mu   sync.Mutex
+	Compress         bool `json:"compress" yaml:"compress"`
+	logFilecreatedAt time.Time
+	size             int64
+	file             *os.File
+	mu               sync.Mutex
 
 	millCh    chan bool
 	startMill sync.Once
@@ -150,6 +154,12 @@ func (l *Logger) Write(p []byte) (n int, err error) {
 	}
 
 	if l.size+writeLen > l.max() {
+		if err := l.rotate(); err != nil {
+			return 0, err
+		}
+	}
+
+	if l.exceedsMidnight() {
 		if err := l.rotate(); err != nil {
 			return 0, err
 		}
@@ -238,6 +248,7 @@ func (l *Logger) openNew() error {
 	}
 	l.file = f
 	l.size = 0
+	l.logFilecreatedAt = currentTime()
 	return nil
 }
 
@@ -449,6 +460,20 @@ func (l *Logger) max() int64 {
 	return int64(l.MaxSize) * int64(megabyte)
 }
 
+// exceedsMidnight checks if the current timestamp is at least one day after the last logged timestamp
+func (l *Logger) exceedsMidnight() bool {
+	// return l.RollingInterval > 0 && time.Now().Unix()-l.createdAt >= l.RollingInterval
+
+	lastRotationDateStartOfDay := StartOfDay(l.logFilecreatedAt)
+	nowStartOfDay := StartOfDay(currentTime())
+
+	// fmt.Printf("lastRotationDate is at: %s\n", lastRotationDate)
+	// fmt.Printf("Now() is  at: %s\n", time.Now())
+	// fmt.Printf("Is now start of day after lastLogLine start of day ? %s\n", strconv.FormatBool(nowStartOfDay.After(lastRotationDateStartOfDay)))
+
+	return l.RotateOnMidnight && nowStartOfDay.After(lastRotationDateStartOfDay)
+}
+
 // dir returns the directory for the current filename.
 func (l *Logger) dir() string {
 	return filepath.Dir(l.filename())
@@ -538,4 +563,9 @@ func (b byFormatTime) Swap(i, j int) {
 
 func (b byFormatTime) Len() int {
 	return len(b)
+}
+
+func StartOfDay(t time.Time) time.Time {
+	year, month, day := t.Date()
+	return time.Date(year, month, day, 0, 0, 0, 0, t.Location())
 }
