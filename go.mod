@@ -1,4 +1,4 @@
-module github.com/manios/lumberjack
+module github.com/manios/lumberjack/v2
 
 require (
 	github.com/BurntSushi/toml v0.3.1
